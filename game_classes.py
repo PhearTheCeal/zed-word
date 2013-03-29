@@ -1,5 +1,4 @@
 import pygame, math, random
-from vector2 import *
 
 screen_width = 640
 screen_height = 480
@@ -14,9 +13,9 @@ class World:
     to the method. This way, the objects update routine can access all of
     the world objects info. It uses this info to know where to blit to.
     """
-    
+
     def __init__(self, screen, world_data="test.world"):
-        self.tiles = [Tile(0,0),Tile(0,1),Tile(0,2),Tile(1,1)]
+        self.tiles = []
         self.screen = screen
         self.camera_x, self.camera_y = screen_width/2, screen_height/2
     def update(self, objects, hero):
@@ -26,6 +25,11 @@ class World:
         self._display(objects, hero)
         pygame.display.update()
     
+    def generate(self):
+        for i in range(-50, 50):
+            for j in range(-50, 50):
+                self.tiles.append(Tile(i,j))
+
     def _draw_tiles(self):
         for tile in self.tiles:
             tile.update(self)
@@ -35,6 +39,14 @@ class World:
             for o in objects[otype]:
                 o.update(self)
         hero.update(self)
+        if hero.dead == True:
+            x = random.randint(-40*20, 40*20)
+            y = random.randint(-40*20, 40*20)
+            hero.x = x
+            hero.y = y
+            self.camera_x = x
+            self.camera_y = y
+            hero.mod_hp(1000)
         
         
 
@@ -60,16 +72,26 @@ class Hero:
         self.base_sprite = pygame.image.load("sprites/hero.png")
         self.cur_sprite = pygame.image.load("sprites/hero.png")
         self.speed = 5
+        self.dead = False
     def move(self, x, y):
         self.x += x*self.speed
         self.y += y*self.speed
     def mod_ammo(self, ammount):
         self.ammo += ammount
-    def mod_hp(ammount):
+    def mod_hp(self, ammount):
         if self.hp + ammount > self.max_hp:
             self.hp = self.max_hp
         else:
             self.hp += ammount
+
+        if self.hp < 0:
+            self.dead = True
+        else:
+            self.dead = False
+
+
+    def is_dead(self):
+        return self.dead
     def get_ammo(self):
         return self.ammo
     def get_hp(self):
@@ -126,7 +148,7 @@ class Zombie:
     def __init__(self, x, y):
         self.x = x
         self.y = y
-        self.hp = 10
+        self.hp = 1
         self.speed = 0.1
         self.attacking = False
         self.base_sprite = pygame.image.load("sprites/zombie.png")
@@ -136,9 +158,11 @@ class Zombie:
         self.sprite.set_colorkey((255,255,255))
         self.aiState = None
         self.angle = 0
+        self.dead = False
     def get_rect(self):
         return self.rect
     def update(self, world):
+
         self._ai()
         self._draw(world)
         real_x = self.x*self.sprite_width + world.camera_x
@@ -176,6 +200,14 @@ class Zombie:
             pass
         else:
             attacking = True
+    def mod_hp(self, ammount):
+        self.hp += ammount
+
+        if self.hp < 0:
+            self.dead = True
+
+    def is_dead(self):
+        return self.dead
         
 
 class Tile:
@@ -215,16 +247,18 @@ class Bullet:
     def __init__(self, x, y, angle):
         self.x, self.y = x, y
         self.angle = angle
-        self.speed = 30
+        self.speed = 25
         self.sprite = pygame.transform.rotate(pygame.image.load("sprites/bullet.png"), self.angle)
         self.sprite.set_colorkey((255,255,255))
         self.life_timer = 30
+        self.rect = pygame.Rect(0,0,0,0)
+        self.dead = False
     def update(self, world):
         self._move()
         self._draw(world)
         self.life_timer -= 1
-        real_x = self.x*self.sprite.get_width() + world.camera_x
-        real_y = self.y*self.sprite.get_height() + world.camera_y
+        real_x = self.x + world.camera_x
+        real_y = self.y + world.camera_y
         self.rect = pygame.Rect(real_x, real_y, self.sprite.get_width(), self.sprite.get_height())
     def get_rect(self):
         return self.rect
@@ -237,7 +271,8 @@ class Bullet:
         self.x += self.speed*math.sin(math.radians(self.angle+90))
         self.y += self.speed*math.cos(math.radians(self.angle+90))
     def _draw(self, world):
-        world.screen.blit(self.sprite, (self.x+world.camera_x,self.y+world.camera_y))
+        pos = (self.x + world.camera_x, (self.y + world.camera_y))
+        world.screen.blit(self.sprite, pos)
 
 class Ammo:
     """
@@ -251,6 +286,7 @@ class Ammo:
     def __init__(self, x, y, ammount=10):
         self.x, self.y = x, y
         self.sprite = pygame.image.load("sprites/ammo.png")
+        self.sprite.set_colorkey((255,255,255))
         self.ammount = ammount # or whatever
     def move(self, x, y):
         self.x += x
@@ -259,13 +295,14 @@ class Ammo:
         return self.ammount
     def get_rect(self):
         return self.rect
-    def update(self):
-        self._draw()
+    def update(self, world):
+        self._draw(world)
         real_x = self.x*self.sprite.get_width() + world.camera_x
         real_y = self.y*self.sprite.get_height() + world.camera_y
         self.rect = pygame.Rect(real_x, real_y, self.sprite.get_width(), self.sprite.get_height())
-    def _draw(self):
-        pass
+    def _draw(self, world):
+        pos = ((self.x*self.sprite.get_width()) + world.camera_x, (self.y*self.sprite.get_width() + world.camera_y))
+        world.screen.blit(self.sprite, pos)
 
 class Health_Pack(Ammo):
     """
@@ -276,8 +313,14 @@ class Health_Pack(Ammo):
         self.x, self.y = x, y
         self.sprite = pygame.image.load("sprites/health pack.png")
         self.ammount = ammount # or whatever
-    def get_health(self): # Calls to this method should be followed by deletion of said object
-        return self.ammount
+    def update(self, world):
+        self._draw(world)
+        real_x = self.x*self.sprite.get_width() + world.camera_x
+        real_y = self.y*self.sprite.get_height() + world.camera_y
+        self.rect = pygame.Rect(real_x, real_y, self.sprite.get_width(), self.sprite.get_height())
+    def _draw(self, world):
+        pos = ((self.x*self.sprite.get_width()) + world.camera_x, (self.y*self.sprite.get_width() + world.camera_y))
+        world.screen.blit(self.sprite, pos)
 
 class Wall:
     """
